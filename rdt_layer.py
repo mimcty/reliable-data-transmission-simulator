@@ -1,191 +1,145 @@
 from segment import Segment
 
-
-# #################################################################################################################### #
-# RDTLayer                                                                                                             #
-#                                                                                                                      #
-# Description:                                                                                                         #
-# The reliable data transfer (RDT) layer is used as a communication layer to resolve issues over an unreliable         #
-# channel.                                                                                                             #
-#                                                                                                                      #
-#                                                                                                                      #
-# Notes:                                                                                                               #
-# This file is meant to be changed.                                                                                    #
-#                                                                                                                      #
-#                                                                                                                      #
-# #################################################################################################################### #
+"""                                                                                                   
+The reliable data transfer (RDT) layer is used as a communication layer to resolve issues over an unreliable        
+channel.
+"""
 
 
 class RDTLayer(object):
-    # ################################################################################################################ #
-    # Class Scope Variables                                                                                            #
-    #                                                                                                                  #
-    #                                                                                                                  #
-    #                                                                                                                  #
-    #                                                                                                                  #
-    #                                                                                                                  #
-    # ################################################################################################################ #
     DATA_LENGTH = 4 # in characters                     # The length of the string data that will be sent per packet...
     FLOW_CONTROL_WIN_SIZE = 15 # in characters          # Receive window size for flow-control
     sendChannel = None
     receiveChannel = None
     dataToSend = ''
     currentIteration = 0                                # Use this for segment 'timeouts'
-    # Add items as needed
 
-    # ################################################################################################################ #
-    # __init__()                                                                                                       #
-    #                                                                                                                  #
-    #                                                                                                                  #
-    #                                                                                                                  #
-    #                                                                                                                  #
-    #                                                                                                                  #
-    # ################################################################################################################ #
+    # client state vars
+    base = 0
+    unackedSegments = 0
+    nextSeqNum = 0
+    sendPacketCheck = None
+    countSegmentTimeouts = 0
+    dupAck = 0
+
+    # server state vars
+    expectedSeqNum = 0
+    receivedDataBuffer = None
+
     def __init__(self):
         self.sendChannel = None
         self.receiveChannel = None
         self.dataToSend = ''
         self.currentIteration = 0
-        # Add items as needed
+        self.receivedDataBuffer = dict()
+        self.sentPacketCheck = dict()
 
-    # ################################################################################################################ #
-    # setSendChannel()                                                                                                 #
-    #                                                                                                                  #
-    # Description:                                                                                                     #
-    # Called by main to set the unreliable sending lower-layer channel                                                 #
-    #                                                                                                                  #
-    #                                                                                                                  #
-    # ################################################################################################################ #
     def setSendChannel(self, channel):
         self.sendChannel = channel
 
-    # ################################################################################################################ #
-    # setReceiveChannel()                                                                                              #
-    #                                                                                                                  #
-    # Description:                                                                                                     #
-    # Called by main to set the unreliable receiving lower-layer channel                                               #
-    #                                                                                                                  #
-    #                                                                                                                  #
-    # ################################################################################################################ #
     def setReceiveChannel(self, channel):
         self.receiveChannel = channel
 
-    # ################################################################################################################ #
-    # setDataToSend()                                                                                                  #
-    #                                                                                                                  #
-    # Description:                                                                                                     #
-    # Called by main to set the string data to send                                                                    #
-    #                                                                                                                  #
-    #                                                                                                                  #
-    # ################################################################################################################ #
+    # application layer "sends" data down to socket (rdt layer)
     def setDataToSend(self,data):
         self.dataToSend = data
 
-    # ################################################################################################################ #
-    # getDataReceived()                                                                                                #
-    #                                                                                                                  #
-    # Description:                                                                                                     #
-    # Called by main to get the currently received and buffered string data, in order                                  #
-    #                                                                                                                  #
-    #                                                                                                                  #
-    # ################################################################################################################ #
+    # Called by main to get the currently received and buffered string data, in order
     def getDataReceived(self):
-        # ############################################################################################################ #
-        # Identify the data that has been received...
+        data = ""
+        for i in range(len(self.receivedDataBuffer)):
+            try:
+                data += self.receivedDataBuffer[i]
+            except KeyError:
+                break
+        return data
 
-        print('getDataReceived(): Complete this...')
-
-        # ############################################################################################################ #
-        return ""
-
-    # ################################################################################################################ #
-    # processData()                                                                                                    #
-    #                                                                                                                  #
-    # Description:                                                                                                     #
-    # "timeslice". Called by main once per iteration                                                                   #
-    #                                                                                                                  #
-    #                                                                                                                  #
-    # ################################################################################################################ #
+    # rdt client/server makes move
     def processData(self):
         self.currentIteration += 1
-        self.processSend()
         self.processReceiveAndSendRespond()
+        self.processSend()
 
-    # ################################################################################################################ #
-    # processSend()                                                                                                    #
-    #                                                                                                                  #
-    # Description:                                                                                                     #
-    # Manages Segment sending tasks                                                                                    #
-    #                                                                                                                  #
-    #                                                                                                                  #
-    # ################################################################################################################ #
+    # rdt layer "sends" data to network layer (create segment, send to sendChannel)
     def processSend(self):
-        segmentSend = Segment()
+        # if there is stuff to send from the app layer:
+        if len(self.dataToSend) != 0:
+            # GBN timeout retransmission
+            if self.base in self.sentPacketCheck and isinstance(self.sentPacketCheck[self.base], Segment):
+                if (self.currentIteration - self.sentPacketCheck[self.base].getStartIteration()) > 5:
+                    # resend all segments in window
+                    self.nextSeqNum = self.base
+                    self.unackedSegments = 0
 
-        # ############################################################################################################ #
-        print('processSend(): Complete this...')
+            while (self.nextSeqNum < len(self.dataToSend)) and ((self.unackedSegments + 1) * self.DATA_LENGTH <= self.FLOW_CONTROL_WIN_SIZE):
+                segmentSend = Segment()
+                data = self.dataToSend[self.nextSeqNum : self.nextSeqNum + self.DATA_LENGTH]
 
-        # You should pipeline segments to fit the flow-control window
-        # The flow-control window is the constant RDTLayer.FLOW_CONTROL_WIN_SIZE
-        # The maximum data that you can send in a segment is RDTLayer.DATA_LENGTH
-        # These constants are given in # characters
+                segmentSend.setData(self.nextSeqNum, data)
+                print("Sending segment: ", segmentSend.to_string())
 
-        # Somewhere in here you will be creating data segments to send.
-        # The data is just part of the entire string that you are trying to send.
-        # The seqnum is the sequence number for the segment (in character number, not bytes)
+                # send segment to unreliable channel sendQueue
+                self.sendChannel.send(segmentSend)
+                segmentSend.setStartIteration(self.currentIteration)
+                self.sentPacketCheck[segmentSend.seqnum] = segmentSend
+
+                # move pointers to next segment
+                self.nextSeqNum += self.DATA_LENGTH
+                self.unackedSegments = (self.nextSeqNum - self.base) // self.DATA_LENGTH
+                print(f"unacked segments in transit: {self.unackedSegments}")
 
 
-        seqnum = "0"
-        data = "x"
-
-
-        # ############################################################################################################ #
-        # Display sending segment
-        segmentSend.setData(seqnum,data)
-        print("Sending segment: ", segmentSend.to_string())
-
-        # Use the unreliable sendChannel to send the segment
-        self.sendChannel.send(segmentSend)
-
-    # ################################################################################################################ #
-    # processReceive()                                                                                                 #
-    #                                                                                                                  #
-    # Description:                                                                                                     #
-    # Manages Segment receive tasks                                                                                    #
-    #                                                                                                                  #
-    #                                                                                                                  #
-    # ################################################################################################################ #
+    # manage segment receive tasks
     def processReceiveAndSendRespond(self):
-        segmentAck = Segment()                  # Segment acknowledging packet(s) received
+        if len(self.receiveChannel.receiveQueue) != 0:
+            incomingSegments = self.receiveChannel.receive()
 
-        # This call returns a list of incoming segments (see Segment class)...
-        listIncomingSegments = self.receiveChannel.receive()
+            for segment in incomingSegments:
+                # case 1: Client-side logic- ack is a response from server
+                if segment.acknum != -1:
+                    print(self.base)
+                    print(self.nextSeqNum)
 
-        # ############################################################################################################ #
-        # What segments have been received?
-        # How will you get them back in order?
-        # This is where a majority of your logic will be implemented
-        print('processReceive(): Complete this...')
+                    # fast retransmit
+                    if segment.acknum == self.base:
+                        self.dupAck += 1
+                        print(f"ACK segment {segment.acknum} dupCount: {self.dupAck}")
+                        if self.dupAck == 3:
+                            # resend all packets in window
+                            for seq in range(self.base, self.nextSeqNum, self.DATA_LENGTH):
+                                packet = self.sentPacketCheck.get(seq)
+                                if isinstance(packet, Segment):
+                                    self.sendChannel.send(packet)
+                                    packet.setStartIteration(self.currentIteration)
+                            self.dupAck = 0
 
+                    # cumulative ack received:
+                    elif segment.acknum > self.base:
+                        for seq in range(self.base, segment.acknum, self.DATA_LENGTH):
+                            if seq in self.sentPacketCheck:
+                                self.sentPacketCheck[seq] = 0
+                                print(f"{self.sendPacketCheck}")
+                                print(f"Segment {self.base} ACKed")
 
+                        self.base = segment.acknum
+                        self.unackedSegments = (self.nextSeqNum - self.base) // self.DATA_LENGTH
+                        self.dupAck = 0
 
+                # case 2: Server-side logic- ack is -1
+                else:
+                    seqNum = segment.seqnum
+                    if not segment.checkChecksum():
+                        break
 
+                    # only store the packet's data if in order
+                    if seqNum == self.expectedSeqNum:
+                        index = seqNum // self.DATA_LENGTH
+                        self.receivedDataBuffer[index] = segment.payload
+                        self.expectedSeqNum += self.DATA_LENGTH
 
+                    # reply with cumulative ACK acking the last continuous byte
+                    ackSegment = Segment()
+                    ackSegment.setAck(self.expectedSeqNum)
+                    print("Sending cumulative ack: ", ackSegment.to_string())
+                    self.sendChannel.send(ackSegment)
 
-        # ############################################################################################################ #
-        # How do you respond to what you have received?
-        # How can you tell data segments apart from ack segemnts?
-        print('processReceive(): Complete this...')
-
-        # Somewhere in here you will be setting the contents of the ack segments to send.
-        # The goal is to employ cumulative ack, just like TCP does...
-        acknum = "0"
-
-
-        # ############################################################################################################ #
-        # Display response segment
-        segmentAck.setAck(acknum)
-        print("Sending ack: ", segmentAck.to_string())
-
-        # Use the unreliable sendChannel to send the ack packet
-        self.sendChannel.send(segmentAck)
