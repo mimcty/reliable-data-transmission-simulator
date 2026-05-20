@@ -96,7 +96,5 @@ print("countDelayedPackets: {0}".format(clientToServerChannel.countDelayedPacket
 print("countDroppedDataPackets: {0}".format(clientToServerChannel.countDroppedPackets))
 print("countAckPackets: {0}".format(serverToClientChannel.countAckPackets))
 print("countDroppedAckPackets: {0}".format(serverToClientChannel.countDroppedPackets))
-
-print("# segment timeouts: {0}".format(client.countSegmentTimeouts))
-
+print("countSegmentTimeouts: {0}".format(client.countSegmentTimeouts))
 print("TOTAL ITERATIONS: {0}".format(loopIter))
