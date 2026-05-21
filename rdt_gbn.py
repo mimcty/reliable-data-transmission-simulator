@@ -2,7 +2,7 @@ from segment import Segment
 
 """                                                                                                   
 The reliable data transfer (RDT) layer is used as a communication layer to resolve issues over an unreliable        
-channel.
+channel. Implements Go-Back-N protocol for server retransmission of packets.
 """
 
 
@@ -18,13 +18,11 @@ class RDTLayer(object):
     base = 0
     unackedSegments = 0
     nextSeqNum = 0
-    sendPacketCheck = None
     countSegmentTimeouts = 0
     dupAck = 0
 
     # server state vars
     expectedSeqNum = 0
-    outOfOrderPacket = 0
     receivedDataBuffer = None
 
     def __init__(self):
@@ -63,13 +61,10 @@ class RDTLayer(object):
 
     # rdt layer "sends" data to network layer (create segment, send to sendChannel)
     def processSend(self):
-        # if there is stuff to send from the app layer:
-        if len(self.dataToSend) != 0:
-
             # GBN timeout retransmission
             for seg in self.sentPacketCheck.values():
                 if isinstance(seg, Segment):
-                    if (self.currentIteration - seg.getStartIteration()) > 1:
+                    if (self.currentIteration - seg.getStartIteration()) > 2:
                         self.countSegmentTimeouts += 1
                         # resend all segments in window
                         self.nextSeqNum = self.base
@@ -77,10 +72,9 @@ class RDTLayer(object):
                         break
 
             while (self.nextSeqNum < len(self.dataToSend)) and \
-            ((self.unackedSegments + 1) * self.DATA_LENGTH <= self.FLOW_CONTROL_WIN_SIZE):
+                    ((self.nextSeqNum - self.base + self.DATA_LENGTH) <= self.FLOW_CONTROL_WIN_SIZE):
                 segmentSend = Segment()
                 data = self.dataToSend[self.nextSeqNum : self.nextSeqNum + self.DATA_LENGTH]
-
                 segmentSend.setData(self.nextSeqNum, data)
                 print("Sending segment: ", segmentSend.to_string())
 
@@ -97,59 +91,47 @@ class RDTLayer(object):
 
     # manage segment receive tasks
     def processReceiveAndSendRespond(self):
-        if len(self.receiveChannel.receiveQueue) != 0:
-            incomingSegments = self.receiveChannel.receive()
+        if len(self.receiveChannel.receiveQueue) == 0:
+            return
 
-            for segment in incomingSegments:
-                # CLIENT: ack is response from server receiving segment
-                if segment.acknum != -1:
+        incomingSegments = self.receiveChannel.receive()
+        needAck = False
 
-                    # fast retransmit
-                    if segment.acknum == self.base:
-                        self.dupAck += 1
-                        print(f"dup ACK received, count: {self.dupAck}")
-                        if self.dupAck == 2:
-                            print("Fast retransmit retriggered!")
-                            # resend all packets in window
-                            for seq in range(self.base, self.nextSeqNum, self.DATA_LENGTH):
-                                packet = self.sentPacketCheck.get(seq)
-                                if isinstance(packet, Segment):
-                                    self.sendChannel.send(packet)
-                                    print("Retransmission- Sending segment: ", packet.to_string())
-                                    packet.setStartIteration(self.currentIteration)
-                            self.dupAck = 0
-
-                    # cumulative ack received:
-                    elif segment.acknum > self.base:
-                        for seq in range(self.base, segment.acknum, self.DATA_LENGTH):
-                            if seq in self.sentPacketCheck:
-                                self.sentPacketCheck[seq] = 0
-                                print(f"Segment {seq} ACKed")
-
-                        self.base = segment.acknum
-                        self.unackedSegments = (self.nextSeqNum - self.base) // self.DATA_LENGTH
+        for segment in incomingSegments:
+            # CLIENT: ack is response from server receiving segment
+            if segment.acknum != -1:
+                # fast retransmit
+                if segment.acknum == self.base and self.nextSeqNum > self.base:
+                    self.dupAck += 1
+                    print(f"dup ACK received, count: {self.dupAck}")
+                    if self.dupAck == 2:
+                        print("Fast retransmit retriggered!")
+                        self.nextSeqNum = self.base
                         self.dupAck = 0
 
-                # SERVER: because ack is -1
-                else:
-                    seqNum = segment.seqnum
-                    if not segment.checkChecksum():
-                        break
+                # cumulative ack received:
+                elif segment.acknum > self.base:
+                    for seq in range(self.base, segment.acknum, self.DATA_LENGTH):
+                        self.sentPacketCheck.pop(seq, None)
+                    self.base = segment.acknum
+                    self.dupAck = 0
+                    self.unackedSegments = (self.nextSeqNum - self.base) // self.DATA_LENGTH
 
-                    # only store the packet's data if in order
-                    if seqNum == self.expectedSeqNum:
-                        index = seqNum // self.DATA_LENGTH
+            # SERVER: because ack is -1
+            else:
+                if segment.checkChecksum():
+                    index = segment.seqnum // self.DATA_LENGTH
+                    if segment.seqnum == self.expectedSeqNum:
                         self.receivedDataBuffer[index] = segment.payload
+
+                    while (self.expectedSeqNum // self.DATA_LENGTH) in self.receivedDataBuffer:
                         self.expectedSeqNum += self.DATA_LENGTH
-                    else:
-                        self.outOfOrderPacket += 1
 
-            # SERVER: reply with cumulative ACK acking the last continuous byte
-            if segment.acknum == -1:
-                while self.outOfOrderPacket >= 0:
-                    ackSegment = Segment()
-                    ackSegment.setAck(self.expectedSeqNum)
-                    print(f"Sending cumulative ack for packet {segment.seqnum}: ", ackSegment.to_string())
-                    self.sendChannel.send(ackSegment)
-                    self.outOfOrderPacket -= 1
+                    needAck = True
 
+        # SERVER: reply with cumulative ACK acking the last continuous byte
+        if needAck:
+            ackSegment = Segment()
+            ackSegment.setAck(self.expectedSeqNum)
+            print("Sending cumulative ack: ", ackSegment.to_string())
+            self.sendChannel.send(ackSegment)

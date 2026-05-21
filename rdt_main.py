@@ -1,4 +1,4 @@
-from rdt_layer import *
+from rdt_gbn import *
 from unreliable import UnreliableChannel
 
 # #################################################################################################################### #
@@ -86,7 +86,6 @@ while True:
         break
 
     #time.sleep(0.1)
-    input("Press enter to continue...")
 
 print("countTotalDataPackets: {0}".format(clientToServerChannel.countTotalDataPackets))
 print("countSentPackets: {0}".format(clientToServerChannel.countSentPackets + serverToClientChannel.countSentPackets))
